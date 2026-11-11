@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
-  PROJECT SHIELD - Live PPE Analysis (V6.2)
-  Served by shield_server.py. Input is the live camera only (no uploads).
+  PROJECT SHIELD - Live PPE Analysis (V6.2 + Mobile Demo Mode)
+  Served by shield_server.py when available. Input is the live camera only (no uploads).
   Live frames are scored by the server; Capture pins the frame on screen;
   Save writes that exact frame + result. No file paths are known to or
   shown by this page.
@@ -9,6 +9,10 @@
   used for the PDF annotated image. Only enabled PPE is drawn, coloured by
   confidence (green high / yellow medium / red low). The result panel uses
   the same sections as the PDF. Status tab shows PPE toggles and roles.
+
+  MOBILE DEMO MODE (GitHub Pages build):
+  If /api/status is unreachable, the page still starts the camera
+  (camera preview only). No analysis is run and no PPE results are shown.
 -->
 <html lang="en">
 <head>
@@ -70,6 +74,12 @@
   .legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:5px;vertical-align:-2px}
   .sec{font-size:13px;color:var(--navy);margin:12px 0 6px;font-weight:700}
   .tagreq{font-size:10px;color:var(--muted);font-weight:600}
+  @media(max-width:600px){
+    header{padding:8px 12px} header h1{font-size:16px} main{padding:10px 10px}
+    nav{padding:0 6px;overflow-x:auto} nav button{padding:10px 10px;font-size:13px;white-space:nowrap}
+    .form{grid-template-columns:1fr}
+    .btn{padding:12px 16px}
+  }
 </style>
 </head>
 <body>
@@ -172,7 +182,7 @@ const STATUS_COLOR = {"DETECTED":"#13A66A","NOT DETECTED (NOT REQUIRED)":"#9AA3A
   "PENDING REVIEW":"#246BCE","POTENTIAL GAP":"#F3A51A","CRITICAL POTENTIAL GAP":"#E25353","SYSTEM ERROR":"#E25353"};
 const FIELDS = ["crew_number","sector","office","work_location","tln_pole_tag"];
 const S = {
-  server:null,           // /api/status payload
+  server:null,           // /api/status payload (null = AI server offline -> demo mode)
   stream:null,           // MediaStream
   running:false,         // live loop active
   loopToken:0,           // invalidates stale loops
@@ -182,7 +192,9 @@ const S = {
 };
 
 /** Escape text for HTML. @param {*} s @returns {string} */
-function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function esc(s){
+  return String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
 /** Show a toast. @param {string} msg @param {"ok"|"err"|""} kind */
 function toast(msg,kind=""){ const t=$("toast"); t.textContent=msg; t.className="show "+kind; clearTimeout(t._h); t._h=setTimeout(()=>t.className="",4500); }
 /** Coloured status badge. @param {string} st @returns {string} */
@@ -202,7 +214,7 @@ async function api(path, body, contentType="application/json"){
 /* =====================================================================
  * SERVER STATUS
  * ===================================================================== */
-/** Load server/model status and update header + Status tab. */
+/** Load server/model status and update header + Status tab. @returns {Promise<boolean>} true if server online */
 async function loadStatus(){
   try{
     S.server = await api("/api/status");
@@ -213,7 +225,7 @@ async function loadStatus(){
     $("pillRules").className="pill "+(c.rules_placeholder?"warn":"ok");
     $("pillRules").textContent="Rules: "+S.server.rules_version;
     const t=c.thresholds, bc=S.server.band_colors;
-    $("legend").innerHTML=`<span><i style="background:${bc.high}"></i>High ≥ ${t.high.toFixed(2)}</span><span><i style="background:${bc.medium}"></i>Medium ${t.medium.toFixed(2)}–${t.high.toFixed(2)}</span><span><i style="background:${bc.low}"></i>Low &lt; ${t.medium.toFixed(2)}</span><span><i style="background:#2F6FED"></i>Worker</span>`;
+    $("legend").innerHTML=`<span><i style="background:${bc.high}"></i>High ≥ ${t.high.toFixed(2)}</span><span><i style="background:${bc.medium}"></i>Medium ${t.medium.toFixed(2)}–${t.high.toFixed(2)}</span><span><i style="background:${bc.low}"></i>Low < ${t.medium.toFixed(2)}</span><span><i style="background:#2F6FED"></i>Worker</span>`;
     $("statusBox").innerHTML=`<span>Model version</span><span>${esc(S.server.model_version)}</span>
       <span>Rules version</span><span>${esc(S.server.rules_version)}</span>
       <span>Confidence bands</span><span>high ≥ ${t.high}, medium ≥ ${t.medium}, model minimum ${t.predict}</span>
@@ -231,8 +243,13 @@ async function loadStatus(){
       `<tr class="${m.kind?"":"opt"}"><td><code>${esc(raw)}</code></td><td>${m.kind?esc(m.kind+": "+m.targets.join(", ")):"ignored (not PPE / not enabled)"}</td></tr>`).join("");
     return true;
   }catch(e){
+    // AI server not reachable -> DEMO MODE (camera preview only, no analysis).
+    S.server = null;
     $("pillServer").className="pill bad"; $("pillServer").textContent="Server: offline";
-    $("stageMsg").textContent="Project Shield server is not reachable. Start shield_server.py, then reload this page.";
+    $("pillModel").className="pill"; $("pillModel").textContent="Model: not connected";
+    $("pillRules").className="pill"; $("pillRules").textContent="Rules: not connected";
+    $("stageMsg").textContent="AI server offline. Starting camera in demo mode…";
+    log("AI server unreachable - demo mode (camera only).", e.message);
     return false;
   }
 }
@@ -240,20 +257,41 @@ async function loadStatus(){
 /* =====================================================================
  * CAMERA
  * ===================================================================== */
-/** Start the camera and the live analysis loop. */
+/** Start the camera. Run the analysis loop only when the AI server is online; otherwise demo mode (preview only). */
 async function startCamera(){
-  if(S.stream || !S.server) return;
-  if(!navigator.mediaDevices?.getUserMedia){ $("stageMsg").textContent="Camera not available. Open this page via http://127.0.0.1 or https."; return; }
+  if(S.stream) return;
+  if(!navigator.mediaDevices?.getUserMedia){
+    $("stageMsg").hidden=false;
+    $("stageMsg").textContent="Camera not available. Open this page via http://127.0.0.1 or https.";
+    return;
+  }
   $("stageMsg").hidden=false; $("stageMsg").textContent="Starting camera…";
+  const camW = S.server?.camera?.width  || 1280;
+  const camH = S.server?.camera?.height || 720;
   try{
     S.stream = await navigator.mediaDevices.getUserMedia({audio:false,
-      video:{width:{ideal:S.server.camera.width},height:{ideal:S.server.camera.height},facingMode:{ideal:"environment"}}});
-  }catch(e){ $("stageMsg").textContent="Camera could not start: "+e.message; S.stream=null; return; }
+      video:{width:{ideal:camW},height:{ideal:camH},facingMode:{ideal:"environment"}}});
+  }catch(e){
+    $("stageMsg").textContent="Camera could not start: "+e.message; S.stream=null;
+    log("Camera start failed:", e);
+    return;
+  }
   if(!$("tab-live").classList.contains("active")){ stopCamera(); return; }  // tab changed while waiting
   const v=$("video"); v.srcObject=S.stream; await v.play().catch(()=>{});
   $("stageMsg").hidden=true; $("stageTag").hidden=false;
   log("Camera started", v.videoWidth+"×"+v.videoHeight);
-  if(!S.frozen) startLoop(); else showFrozenTag();
+
+  if(S.server){
+    // FULL MODE: live analysis through the Project Shield server.
+    if(!S.frozen) startLoop(); else showFrozenTag();
+  }else{
+    // DEMO MODE: live preview only. No analysis, no PPE results, no capture.
+    $("stageTag").className="tag live"; $("stageTag").textContent="LIVE · DEMO MODE";
+    $("resultTitle").textContent="Demo mode";
+    $("liveStats").textContent="Camera only · AI server not connected";
+    $("result").innerHTML='<div class="banner warn">Camera is live. PPE analysis is unavailable because the Project Shield AI server is not connected. No PPE results are generated in demo mode.</div>';
+    refreshButtons();
+  }
 }
 
 /** Stop the camera and the live loop. */
@@ -408,7 +446,7 @@ function resumeLive(){
   if(S.frozen) URL.revokeObjectURL(S.frozen.url);
   S.frozen=null; $("stage").classList.remove("frozen"); clearOverlay();
   $("result").innerHTML='<div class="banner">Waiting for the next analyzed frame…</div>';
-  if(S.stream) startLoop(); else if($("tab-live").classList.contains("active")) startCamera();
+  if(S.stream){ if(S.server) startLoop(); } else if($("tab-live").classList.contains("active")) startCamera();
   refreshButtons();
 }
 
@@ -443,7 +481,8 @@ async function init(){
   window.addEventListener("resize",redraw);
   window.addEventListener("beforeunload",e=>{ if(S.frozen){ e.preventDefault(); e.returnValue=""; } });
   refreshButtons();
-  if(await loadStatus()) showTab("live");
+  await loadStatus();   // online -> full mode, offline -> demo mode
+  showTab("live");      // camera starts in both cases
 }
 init();
 </script>
