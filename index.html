@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<!--
+  PROJECT SHIELD - Live PPE Analysis (V6.2)
+  Served by shield_server.py. Input is the live camera only (no uploads).
+  Live frames are scored by the server; Capture pins the frame on screen;
+  Save writes that exact frame + result. No file paths are known to or
+  shown by this page.
+  V6.2: the overlay is drawn from the server's overlay list - the same list
+  used for the PDF annotated image. Only enabled PPE is drawn, coloured by
+  confidence (green high / yellow medium / red low). The result panel uses
+  the same sections as the PDF. Status tab shows PPE toggles and roles.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Shield - Live PPE Analysis</title>
+<style>
+  :root{--brand:#F37021;--navy:#173B64;--bg:#F4F6FA;--card:#fff;--line:#DDE2EA;--text:#1B2430;--muted:#616B78;
+        --ok:#13A66A;--gray:#616B78;--blue:#246BCE;--orange:#F3A51A;--red:#E25353}
+  [hidden]{display:none!important}
+  *{box-sizing:border-box} body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;align-items:center;gap:14px;padding:10px 18px;background:var(--navy);color:#fff;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;letter-spacing:.5px} header h1 b{color:var(--brand)}
+  .pills{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .pill{font-size:12px;padding:3px 10px;border-radius:12px;background:#ffffff22;white-space:nowrap}
+  .pill.ok{background:var(--ok)} .pill.warn{background:var(--orange);color:#222} .pill.bad{background:var(--red)}
+  nav{display:flex;gap:4px;padding:0 18px;background:#fff;border-bottom:1px solid var(--line)}
+  nav button{border:0;background:none;padding:12px 16px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent}
+  nav button.active{color:var(--navy);border-bottom-color:var(--brand)}
+  main{padding:16px 18px} section{display:none} section.active{display:block}
+  .grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr);gap:16px}
+  @media(max-width:1000px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{font-size:15px;margin:0 0 10px;color:var(--navy)}
+  .stage{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9}
+  .stage video,.stage img,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  .stage img{display:none} .stage.frozen img{display:block} .stage.frozen video{visibility:hidden}
+  .stage .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;text-align:center;padding:20px}
+  .tag{position:absolute;top:10px;left:10px;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;color:#fff;background:#000a}
+  .tag.live::before{content:"● ";color:#ff4d4d} .tag.frozen{background:var(--brand)}
+  .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .3s} .flash.on{opacity:.8;transition:none}
+  .controls{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+  .btn{border:0;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;color:#fff;background:var(--navy)}
+  .btn:disabled{opacity:.4;cursor:not-allowed} .btn.cap{background:var(--brand)} .btn.save{background:var(--ok)} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)}
+  .hint{font-size:12px;color:var(--muted)}
+  .toggle{font-size:12px;color:var(--navy);display:flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto}
+  .overall{border-radius:10px;padding:14px;margin-bottom:12px;color:#fff;background:var(--gray)}
+  .overall .lbl{font-size:12px;opacity:.9} .overall .val{font-size:22px;font-weight:800;margin:2px 0 6px}
+  .overall .act{font-size:13px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin-bottom:10px} .kv span:nth-child(odd){color:var(--muted)}
+  .worker{border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden}
+  .worker .wh{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:#F7F9FC;font-weight:700;font-size:13px;gap:8px}
+  .worker .flags{font-size:12px;color:#b26b00;padding:4px 10px 0}
+  table{width:100%;border-collapse:collapse;font-size:12.5px} td,th{padding:5px 10px;border-top:1px solid #EEF0F3;text-align:left;vertical-align:top}
+  tr.opt td{color:var(--muted)}
+  .st{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
+  .list{font-size:12.5px;margin:4px 0 10px;padding-left:18px}
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:6px}
+  .form label{font-size:12px;font-weight:600;display:flex;flex-direction:column;gap:3px;color:var(--muted)}
+  .form input{padding:8px;border-radius:6px;border:1px solid var(--line);font-size:14px;color:var(--text)}
+  .form input:invalid{border-color:var(--orange)}
+  .banner{padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:#EEF5FF;color:var(--navy)}
+  .banner.warn{background:#FFF5DD;color:#7a5200} .banner.bad{background:#FDEEEE;color:#9b1c1c}
+  #toast{position:fixed;right:18px;bottom:18px;max-width:420px;padding:12px 16px;border-radius:8px;color:#fff;font-size:14px;background:var(--navy);opacity:0;transform:translateY(10px);transition:.25s;pointer-events:none;z-index:9}
+  #toast.show{opacity:1;transform:none} #toast.ok{background:var(--ok)} #toast.err{background:var(--red)}
+  .thumb{width:96px;border-radius:4px}
+  .muted{color:var(--muted)}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:5px;vertical-align:-2px}
+  .sec{font-size:13px;color:var(--navy);margin:12px 0 6px;font-weight:700}
+  .tagreq{font-size:10px;color:var(--muted);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>PROJECT <b>SHIELD</b> · Live PPE Analysis</h1>
+  <div class="pills">
+    <span class="pill" id="pillServer">Server: checking…</span>
+    <span class="pill" id="pillModel">Model: –</span>
+    <span class="pill" id="pillRules">Rules: –</span>
+  </div>
+</header>
+<nav>
+  <button data-tab="live" class="active">Live Analysis</button>
+  <button data-tab="saved">Saved This Session</button>
+  <button data-tab="about">Status &amp; Notes</button>
+</nav>
+<main>
+<!-- ======================= LIVE ======================= -->
+<section id="tab-live" class="active">
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div class="stage" id="stage">
+          <video id="video" playsinline muted></video>
+          <img id="frozenImg" alt="Captured frame">
+          <canvas id="overlay"></canvas>
+          <div class="msg" id="stageMsg">Starting camera…</div>
+          <div class="tag live" id="stageTag" hidden>LIVE</div>
+          <div class="flash" id="flash"></div>
+        </div>
+        <div class="controls">
+          <button class="btn cap" id="btnCapture" disabled>📸 Capture</button>
+          <button class="btn save" id="btnSave" disabled hidden>💾 Save picture &amp; results</button>
+          <button class="btn ghost" id="btnRetake" hidden>↺ Retake</button>
+          <span class="hint" id="liveStats"></span>
+          <label class="toggle"><input type="checkbox" id="chkAllDet" checked> Show PPE boxes</label>
+        </div>
+        <div class="hint" style="margin-top:6px">Space = Capture. The camera runs only while this tab is open. Saved results are exactly the result shown at the moment of capture.</div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Submission details</h2>
+        <div class="form">
+          <label>Crew number *<input id="f_crew_number" required autocomplete="off"></label>
+          <label>Sector<input id="f_sector" autocomplete="off"></label>
+          <label>Office<input id="f_office" autocomplete="off"></label>
+          <label>Work location<input id="f_work_location" autocomplete="off"></label>
+          <label>TLN / Pole tag<input id="f_tln_pole_tag" autocomplete="off"></label>
+          <label>Nature of work<input value="All work types (combined rules)" disabled></label>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="resultCard">
+      <h2 id="resultTitle">Live result</h2>
+      <div id="result"><div class="banner">Waiting for the first analyzed frame…</div></div>
+    </div>
+  </div>
+</section>
+<!-- ======================= SAVED ======================= -->
+<section id="tab-saved">
+  <div class="card">
+    <h2>Assessments saved in this browser session</h2>
+    <table><thead><tr><th>Photo</th><th>Assessment ID</th><th>Captured</th><th>Crew</th><th>Overall result</th></tr></thead>
+      <tbody id="savedRows"><tr><td colspan="5" class="muted">Nothing saved yet.</td></tr></tbody></table>
+    <p class="hint">Reports (PDF), result JSON and annotated images are written by the server to the configured results folders.</p>
+  </div>
+</section>
+<!-- ======================= ABOUT ======================= -->
+<section id="tab-about">
+  <div class="card">
+    <h2>Status</h2>
+    <div id="statusBox" class="kv"></div>
+    <div id="statusWarn"></div>
+    <h2 style="margin-top:14px">PPE items</h2>
+    <table><thead><tr><th>PPE</th><th>State</th><th>Model classes</th><th>Region</th></tr></thead><tbody id="ppeRows"></tbody></table>
+    <h2 style="margin-top:14px">Roles and required PPE <span class="muted" style="font-weight:400">(placeholder rules)</span></h2>
+    <table><thead><tr><th>Role</th><th>Model classes</th><th>Required (checked)</th><th>Verify manually</th></tr></thead><tbody id="roleRows"></tbody></table>
+    <h2 style="margin-top:14px">Model classes</h2>
+    <table><thead><tr><th>Model class</th><th>Used as</th></tr></thead><tbody id="mapRows"></tbody></table>
+    <p class="hint">Edit "ppe", "roles" and "confidence" in shield_config.json and restart the server to change these.</p>
+    <h2 style="margin-top:14px">How results are determined</h2>
+    <ul class="list">
+      <li>Workers are anchored on role detections (Groundman, Live-Line Worker, Foreman, Distribution Engineer, Safety Officer) or, when no role box covers them, on generic person detections. PPE is linked by head / torso / hands / feet region.</li>
+      <li>Each role has its own required PPE list. Each required item gets its own status. There is no numeric score: the overall result is the worst required-item status.</li>
+      <li>"Not detected" is not automatically non-compliant. It becomes POTENTIAL GAP only when the item is required, the model knows the class and the body region is clearly visible; otherwise NOT OBSERVABLE.</li>
+      <li>Box colour = model confidence: green counts as DETECTED; yellow / red on a required item = PENDING REVIEW.</li>
+      <li>PPE switched off in the config is not detected or scored; if a role requires it, it is listed under "Verify manually".</li>
+      <li>Project Shield is visual decision support. It does not replace field inspection by the supervisor / safety officer.</li>
+    </ul>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+<script>
+/* =====================================================================
+ * STATE
+ * ===================================================================== */
+const $ = id => document.getElementById(id);
+const STATUS_COLOR = {"DETECTED":"#13A66A","NOT DETECTED (NOT REQUIRED)":"#9AA3AE","NOT OBSERVABLE":"#616B78",
+  "PENDING REVIEW":"#246BCE","POTENTIAL GAP":"#F3A51A","CRITICAL POTENTIAL GAP":"#E25353","SYSTEM ERROR":"#E25353"};
+const FIELDS = ["crew_number","sector","office","work_location","tln_pole_tag"];
+const S = {
+  server:null,           // /api/status payload
+  stream:null,           // MediaStream
+  running:false,         // live loop active
+  loopToken:0,           // invalidates stale loops
+  last:null,             // {blob,url,result} most recent analyzed frame
+  frozen:null,           // {blob,url,result} captured frame awaiting save
+  busy:false, fpsTimes:[], saved:[]
+};
+
+/** Escape text for HTML. @param {*} s @returns {string} */
+function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+/** Show a toast. @param {string} msg @param {"ok"|"err"|""} kind */
+function toast(msg,kind=""){ const t=$("toast"); t.textContent=msg; t.className="show "+kind; clearTimeout(t._h); t._h=setTimeout(()=>t.className="",4500); }
+/** Coloured status badge. @param {string} st @returns {string} */
+function badge(st){ return `<span class="st" style="background:${STATUS_COLOR[st]||"#616B78"}">${esc(st)}</span>`; }
+/** Log progress to the browser console. */
+function log(...a){ console.log("[Project Shield]",...a); }
+/** POST JSON or a Blob and return parsed JSON; throws Error(message) on failure. */
+async function api(path, body, contentType="application/json"){
+  const res = await fetch(path,{method:body===undefined?"GET":"POST",
+    headers:body===undefined?{}:{"Content-Type":contentType},
+    body:body===undefined?undefined:(contentType==="application/json"?JSON.stringify(body):body)});
+  let data={}; try{ data=await res.json(); }catch{}
+  if(!res.ok) throw new Error(data.error||`HTTP ${res.status}`);
+  return data;
+}
+
+/* =====================================================================
+ * SERVER STATUS
+ * ===================================================================== */
+/** Load server/model status and update header + Status tab. */
+async function loadStatus(){
+  try{
+    S.server = await api("/api/status");
+    const c=S.server.report;
+    $("pillServer").className="pill ok"; $("pillServer").textContent="Server: online";
+    $("pillModel").className="pill "+(c.has_roles&&!c.missing_ppe.length?"ok":"warn");
+    $("pillModel").textContent="Model: "+S.server.model_version;
+    $("pillRules").className="pill "+(c.rules_placeholder?"warn":"ok");
+    $("pillRules").textContent="Rules: "+S.server.rules_version;
+    const t=c.thresholds, bc=S.server.band_colors;
+    $("legend").innerHTML=`<span><i style="background:${bc.high}"></i>High ≥ ${t.high.toFixed(2)}</span><span><i style="background:${bc.medium}"></i>Medium ${t.medium.toFixed(2)}–${t.high.toFixed(2)}</span><span><i style="background:${bc.low}"></i>Low &lt; ${t.medium.toFixed(2)}</span><span><i style="background:#2F6FED"></i>Worker</span>`;
+    $("statusBox").innerHTML=`<span>Model version</span><span>${esc(S.server.model_version)}</span>
+      <span>Rules version</span><span>${esc(S.server.rules_version)}</span>
+      <span>Confidence bands</span><span>high ≥ ${t.high}, medium ≥ ${t.medium}, model minimum ${t.predict}</span>
+      <span>Camera request</span><span>${S.server.camera.width}×${S.server.camera.height}</span>
+      <span>Capture expires after</span><span>${S.server.max_capture_age_seconds} s</span>`;
+    let w="";
+    if(c.rules_placeholder) w+='<div class="banner warn">PPE rules are placeholders and not yet approved by the Rules Owner.</div>';
+    if(c.missing_ppe.length) w+=`<div class="banner warn">Enabled PPE with no model class (will be NOT OBSERVABLE when required): ${esc(c.missing_ppe.join(", "))}.</div>`;
+    if(!c.has_roles) w+='<div class="banner bad">Model has no role or person classes: no worker can be detected.</div>';
+    $("statusWarn").innerHTML=w;
+    const stColor={active:"#13A66A",disabled:"#9AA3AE","no model class":"#F3A51A"};
+    $("ppeRows").innerHTML=c.ppe.map(p=>`<tr class="${p.enabled?"":"opt"}"><td>${esc(p.label)}${p.critical?" ⛑":""}</td><td><span class="st" style="background:${stColor[p.state]}">${esc(p.state.toUpperCase())}</span></td><td><code>${esc(p.model_classes.join(", ")||"–")}</code></td><td>${esc(p.region)}</td></tr>`).join("");
+    $("roleRows").innerHTML=c.roles.map(r=>`<tr><td>${esc(r.label)}</td><td><code>${esc(r.model_classes.join(", ")||"–")}</code></td><td>${esc(r.required_ppe.join(", ")||"–")}</td><td>${esc(r.manual_checks.join(", ")||"–")}</td></tr>`).join("");
+    $("mapRows").innerHTML=Object.entries(c.mapping).map(([raw,m])=>
+      `<tr class="${m.kind?"":"opt"}"><td><code>${esc(raw)}</code></td><td>${m.kind?esc(m.kind+": "+m.targets.join(", ")):"ignored (not PPE / not enabled)"}</td></tr>`).join("");
+    return true;
+  }catch(e){
+    $("pillServer").className="pill bad"; $("pillServer").textContent="Server: offline";
+    $("stageMsg").textContent="Project Shield server is not reachable. Start shield_server.py, then reload this page.";
+    return false;
+  }
+}
+
+/* =====================================================================
+ * CAMERA
+ * ===================================================================== */
+/** Start the camera and the live analysis loop. */
+async function startCamera(){
+  if(S.stream || !S.server) return;
+  if(!navigator.mediaDevices?.getUserMedia){ $("stageMsg").textContent="Camera not available. Open this page via http://127.0.0.1 or https."; return; }
+  $("stageMsg").hidden=false; $("stageMsg").textContent="Starting camera…";
+  try{
+    S.stream = await navigator.mediaDevices.getUserMedia({audio:false,
+      video:{width:{ideal:S.server.camera.width},height:{ideal:S.server.camera.height},facingMode:{ideal:"environment"}}});
+  }catch(e){ $("stageMsg").textContent="Camera could not start: "+e.message; S.stream=null; return; }
+  if(!$("tab-live").classList.contains("active")){ stopCamera(); return; }  // tab changed while waiting
+  const v=$("video"); v.srcObject=S.stream; await v.play().catch(()=>{});
+  $("stageMsg").hidden=true; $("stageTag").hidden=false;
+  log("Camera started", v.videoWidth+"×"+v.videoHeight);
+  if(!S.frozen) startLoop(); else showFrozenTag();
+}
+
+/** Stop the camera and the live loop. */
+function stopCamera(){
+  stopLoop();
+  if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; log("Camera stopped"); }
+  $("video").srcObject=null;
+  if(!S.frozen){ clearOverlay(); $("stageTag").hidden=true; $("stageMsg").hidden=false; $("stageMsg").textContent="Camera off."; }
+}
+
+/* =====================================================================
+ * LIVE LOOP: grab frame → /api/analyze → render → repeat
+ * ===================================================================== */
+/** Start the analyze loop (one request in flight at a time). */
+function startLoop(){ S.running=true; const token=++S.loopToken; $("stageTag").className="tag live"; $("stageTag").textContent="LIVE"; loop(token); }
+/** Stop the analyze loop. */
+function stopLoop(){ S.running=false; S.loopToken++; refreshButtons(); }
+
+/** Encode the current video frame at native resolution as JPEG. @returns {Promise<Blob|null>} */
+function grabFrame(){
+  const v=$("video"); if(!v.videoWidth) return Promise.resolve(null);
+  const c=grabFrame.c||(grabFrame.c=document.createElement("canvas"));
+  c.width=v.videoWidth; c.height=v.videoHeight; c.getContext("2d").drawImage(v,0,0);
+  return new Promise(r=>c.toBlob(r,"image/jpeg",S.server.camera.jpeg_quality));
+}
+
+/** Live loop body. @param {number} token */
+async function loop(token){
+  while(S.running && token===S.loopToken){
+    const blob=await grabFrame();
+    if(!blob){ await new Promise(r=>setTimeout(r,150)); continue; }
+    try{
+      const result=await api("/api/analyze",blob,"image/jpeg");
+      if(!S.running || token!==S.loopToken) break;   // captured/stopped meanwhile
+      if(S.last) URL.revokeObjectURL(S.last.url);
+      S.last={blob,url:URL.createObjectURL(blob),result};
+      const now=performance.now(); S.fpsTimes.push(now); S.fpsTimes=S.fpsTimes.filter(t=>now-t<3000);
+      $("liveStats").textContent=`${(S.fpsTimes.length/3).toFixed(1)} results/s · inference ${result.inference_ms} ms · ${result.quality.width}×${result.quality.height} · ${result.overlay.filter(o=>o.kind!=='worker').length} PPE boxes`;
+      render(result,false); refreshButtons();
+    }catch(e){
+      renderError(e.message); await new Promise(r=>setTimeout(r,1000));
+    }
+  }
+}
+
+/* =====================================================================
+ * RENDERING
+ * ===================================================================== */
+/** Clear the overlay canvas. */
+function clearOverlay(){ const c=$("overlay"); c.getContext("2d").clearRect(0,0,c.width,c.height); }
+
+/** Draw the server overlay list (same list as the PDF image), fitted like object-fit:contain. @param {object} r */
+function drawOverlay(r){
+  const c=$("overlay"), st=$("stage"), dpr=window.devicePixelRatio||1;
+  c.width=st.clientWidth*dpr; c.height=st.clientHeight*dpr;
+  const g=c.getContext("2d"); g.clearRect(0,0,c.width,c.height);
+  const W=r.quality.width,H=r.quality.height, s=Math.min(c.width/W,c.height/H), ox=(c.width-W*s)/2, oy=(c.height-H*s)/2;
+  const showPPE=$("chkAllDet").checked;
+  const items=r.overlay.filter(o=>o.kind==="worker").concat(showPPE?r.overlay.filter(o=>o.kind!=="worker"):[]);
+  items.forEach(o=>{
+    const b=o.box, x=ox+b[0]*s,y=oy+b[1]*s,w=(b[2]-b[0])*s,h=(b[3]-b[1])*s, worker=o.kind==="worker";
+    g.lineWidth=(worker?3:2)*dpr; g.strokeStyle=o.color; g.strokeRect(x,y,w,h);
+    g.font=`600 ${11*dpr}px Segoe UI,Arial`; const tw=g.measureText(o.label).width+8*dpr, th=15*dpr;
+    const ly=worker?Math.min(c.height-th,y+h):Math.max(0,y-th);
+    g.fillStyle=o.color; g.fillRect(x,ly,tw,th); g.fillStyle=o.text_color; g.fillText(o.label,x+4*dpr,ly+11*dpr);
+  });
+}
+
+/** Render the result panel. @param {object} r @param {boolean} frozen */
+function render(r,frozen){
+  const a=r.analysis, q=r.quality, color=STATUS_COLOR[a.overall_result]||"#616B78";
+  $("resultTitle").textContent=frozen?"Captured result (will be saved as shown)":"Live result";
+  let h=`<div class="overall" style="background:${color}"><div class="lbl">OVERALL RESULT</div><div class="val">${esc(a.overall_result)}</div><div class="act">${esc(a.recommended_action)}</div></div>
+    <div class="kv"><span>Workers detected</span><span>${a.workers.length}</span>
+    <span>Image quality</span><span>${q.passed?"OK":esc(q.reasons.join(", "))} <span class="muted">(blur ${q.blur_variance}, brightness ${q.brightness})</span></span>
+    <span>Frame time</span><span>${new Date(r.captured_at).toLocaleTimeString()}</span></div>`;
+  h+=`<div class="sec">Findings per Worker</div>`;
+  if(!a.workers.length) h+='<div class="banner warn">No worker detected.</div>';
+  a.workers.forEach(w=>{
+    const items=Object.values(w.items).filter(i=>S.server.show_not_required||i.status!=="NOT DETECTED (NOT REQUIRED)").sort((x,y)=>(y.required-x.required));
+    h+=`<div class="worker"><div class="wh"><span>Worker ${w.worker_no} - ${esc(w.role)} <span class="muted">(role conf ${w.role_confidence.toFixed(2)})</span></span>${badge(w.worker_result)}</div>`+
+      (w.flags.length?`<div class="flags">Flags: ${esc(w.flags.join("; "))}</div>`:"")+
+      `<table>${items.map(i=>`<tr class="${i.required?"":"opt"}"><td>${i.required?"<b>":""}${esc(i.label)}${i.required?"</b>":""} ${i.required?`<span class="tagreq">[REQUIRED${i.critical?", CRITICAL":""}]</span>`:""}<div class="muted" style="font-size:11px">${esc(i.reason)}</div></td><td style="text-align:right">${badge(i.status)}</td></tr>`).join("")}</table></div>`;
+  });
+  if(a.unassigned_ppe.length) h+=`<div class="banner warn">PPE not linked to any worker: ${esc(a.unassigned_ppe.map(u=>u.item).join(", "))}</div>`;
+  h+=`<div class="sec">Summary of Items Needing Attention</div><ul class="list">${(a.narrative_findings.length?a.narrative_findings:["No findings."]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`;
+  if(a.manual_checks.length) h+=`<div class="sec">Not Checked Automatically (verify manually)</div><div class="banner">${esc(a.manual_checks.join(", "))}</div>`;
+  if(a.retake_items.length) h+=`<div class="sec">Retake Photo For</div><ul class="list">${a.retake_items.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`;
+  $("result").innerHTML=h; drawOverlay(r);
+}
+
+/** Show an analysis error in the panel. @param {string} msg */
+function renderError(msg){ $("result").innerHTML=`<div class="overall" style="background:${STATUS_COLOR["SYSTEM ERROR"]}"><div class="lbl">OVERALL RESULT</div><div class="val">SYSTEM ERROR</div><div class="act">${esc(msg)}</div></div>`; clearOverlay(); }
+
+/* =====================================================================
+ * CAPTURE / SAVE / RETAKE
+ * ===================================================================== */
+/** Enable/disable buttons for the current state. */
+function refreshButtons(){
+  const fr=!!S.frozen;
+  $("btnCapture").hidden=fr; $("btnSave").hidden=!fr; $("btnRetake").hidden=!fr;
+  $("btnCapture").disabled=!(S.running && S.last && !S.busy);
+  $("btnSave").disabled=!(fr && !S.busy); $("btnRetake").disabled=S.busy;
+}
+
+/** Show the frozen tag. */
+function showFrozenTag(){ $("stageTag").hidden=false; $("stageTag").className="tag frozen"; $("stageTag").textContent="CAPTURED – not yet saved"; }
+
+/** Freeze the frame (and result) currently displayed and pin it on the server. */
+async function capture(){
+  if(!S.last || S.frozen || S.busy) return;
+  const shot=S.last; S.busy=true; stopLoop();
+  $("flash").classList.add("on"); setTimeout(()=>$("flash").classList.remove("on"),60);
+  try{
+    await api("/api/capture",{frame_id:shot.result.frame_id});
+    S.frozen=shot; S.last=null;
+    $("frozenImg").src=shot.url; $("stage").classList.add("frozen"); showFrozenTag();
+    render(shot.result,true); log("Captured", shot.result.analysis.overall_result);
+    if(!$("f_crew_number").value.trim()){ toast("Captured. Enter the crew number, then Save.",""); $("f_crew_number").focus(); }
+  }catch(e){ toast("Capture failed: "+e.message,"err"); if(S.stream) startLoop(); }
+  finally{ S.busy=false; refreshButtons(); }
+}
+
+/** Save the captured frame + result through the server. */
+async function save(){
+  if(!S.frozen || S.busy) return;
+  const md={}; FIELDS.forEach(f=>md[f]=$("f_"+f).value.trim());
+  if(!md.crew_number){ toast("Crew number is required before saving.","err"); $("f_crew_number").focus(); return; }
+  S.busy=true; refreshButtons();
+  try{
+    const out=await api("/api/save",{frame_id:S.frozen.result.frame_id,metadata:md});
+    const t=document.createElement("canvas"); const im=$("frozenImg"); t.width=96; t.height=Math.round(96*im.naturalHeight/im.naturalWidth);
+    t.getContext("2d").drawImage(im,0,0,t.width,t.height);
+    S.saved.push({id:out.assessment_id,time:new Date(S.frozen.result.captured_at),crew:md.crew_number,overall:out.overall_result,thumb:t.toDataURL("image/jpeg",.6)});
+    renderSaved(); toast(`Saved ${out.assessment_id} · ${out.overall_result}`,"ok"); log("Saved",out);
+    resumeLive();
+  }catch(e){
+    toast("Not saved: "+e.message,"err");
+    if(/expired|already saved/i.test(e.message)) resumeLive();
+  }finally{ S.busy=false; refreshButtons(); }
+}
+
+/** Discard the capture and return to live. */
+async function retake(){
+  if(!S.frozen) return;
+  api("/api/discard",{frame_id:S.frozen.result.frame_id}).catch(()=>{});
+  resumeLive();
+}
+
+/** Leave frozen state and restart live analysis. */
+function resumeLive(){
+  if(S.frozen) URL.revokeObjectURL(S.frozen.url);
+  S.frozen=null; $("stage").classList.remove("frozen"); clearOverlay();
+  $("result").innerHTML='<div class="banner">Waiting for the next analyzed frame…</div>';
+  if(S.stream) startLoop(); else if($("tab-live").classList.contains("active")) startCamera();
+  refreshButtons();
+}
+
+/** Render the saved-this-session table. */
+function renderSaved(){
+  $("savedRows").innerHTML=S.saved.slice().reverse().map(s=>`<tr><td><img class="thumb" src="${s.thumb}"></td><td><code>${esc(s.id)}</code></td><td>${s.time.toLocaleString()}</td><td>${esc(s.crew)}</td><td>${badge(s.overall)}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="muted">Nothing saved yet.</td></tr>';
+}
+
+/* =====================================================================
+ * TABS + INIT
+ * ===================================================================== */
+/** Switch tab; camera runs only on the Live tab. @param {string} name */
+function showTab(name){
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.tab===name));
+  document.querySelectorAll("main section").forEach(s=>s.classList.toggle("active",s.id==="tab-"+name));
+  if(name==="live" && !document.hidden) startCamera(); else stopCamera();
+}
+
+/** Re-draw the overlay of the result currently shown. */
+function redraw(){ const r=S.frozen?.result||S.last?.result; if(r) drawOverlay(r); }
+
+/** Wire events and start. */
+async function init(){
+  document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+  $("btnCapture").onclick=capture; $("btnSave").onclick=save; $("btnRetake").onclick=retake;
+  $("chkAllDet").checked=localStorage.getItem("shield_show_ppe")!=="0";
+  $("chkAllDet").onchange=()=>{ localStorage.setItem("shield_show_ppe",$("chkAllDet").checked?"1":"0"); redraw(); };
+  FIELDS.forEach(f=>{ const el=$("f_"+f); el.value=localStorage.getItem("shield_"+f)||""; el.oninput=()=>localStorage.setItem("shield_"+f,el.value); });
+  document.addEventListener("keydown",e=>{ if(e.code==="Space" && !/INPUT|TEXTAREA|BUTTON/.test(document.activeElement.tagName) && $("tab-live").classList.contains("active")){ e.preventDefault(); capture(); } });
+  document.addEventListener("visibilitychange",()=>{ if(document.hidden) stopCamera(); else if($("tab-live").classList.contains("active")) startCamera(); });
+  window.addEventListener("resize",redraw);
+  window.addEventListener("beforeunload",e=>{ if(S.frozen){ e.preventDefault(); e.returnValue=""; } });
+  refreshButtons();
+  if(await loadStatus()) showTab("live");
+}
+init();
+</script>
+</body>
+</html>
